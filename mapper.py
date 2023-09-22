@@ -28,8 +28,6 @@ class MapperComplex(BaseEstimator, TransformerMixin):
             colors (numpy array of shape (num_points) x (num_colors)): functions used to color the 
                 nodes of the cover complex. More specifically, coloring is done by computing the 
                 means of these functions on the subpopulations corresponding to each node. 
-            mask (int): threshold on the size of the cover complex nodes (default 0). Any node 
-                associated to a subpopulation with less than **mask** points will be removed.
             filters (numpy array of shape (num_points) x (num_filters)): filter functions 
                 (sometimes called lenses) used to compute the cover. Each column of the numpy array 
                 defines a scalar function defined on the input points.
@@ -47,34 +45,7 @@ class MapperComplex(BaseEstimator, TransformerMixin):
         self.filters, self.filter_bnds, self.resolutions = filters, filter_bnds, resolutions
         self.gains, self.colors, self.clustering = gains, colors, clustering
         self.input_type = input_type
-    
-    def get_networkx(self, get_attrs=False):
-        """
-        Turn the 1-skeleton of the cover complex computed after calling fit() method into a networkx graph.
-        This function requires networkx (https://networkx.org/documentation/stable/install.html).
 
-        Parameters:
-            get_attrs (bool): if True, the color functions will be used as attributes for the networkx graph.
-
-        Returns:
-            G (networkx graph): graph representing the 1-skeleton of the cover complex.
-        """
-        st = self.simplex_tree
-        G = nx.Graph()
-        for (splx,_) in st.get_skeleton(1):
-            if len(splx) == 1:
-                G.add_node(splx[0])
-            if len(splx) == 2:
-                G.add_edge(splx[0], splx[1])
-        if get_attrs:
-            c_vals=[float(node['colors']) for node in self.node_info.values()]
-            norm = mpl.colors.Normalize(vmin=np.min(c_vals), vmax=np.max(c_vals))
-            cmap = cm.viridis
-            m = cm.ScalarMappable(norm=norm,  cmap=cmap)
-            attrs = {k: {"color": to_hex(m.to_rgba(float(self.node_info[k]["colors"])
-                                                   ,bytes=True)[0:3])} for k in G.nodes()}
-            nx.set_node_attributes(G, attrs)
-        return G
 
     
     def get_pyvis(self, directed=False, cmap=cm.viridis):
@@ -87,7 +58,7 @@ class MapperComplex(BaseEstimator, TransformerMixin):
             cmap (matplotlib colormap): colormap used to represent the color attribute
 
         Returns:
-            G (pyvis graph): graph representing the 1-skeleton of the cover complex.
+            nt (pyvis graph): graph representing the 1-skeleton of the cover complex.
         """
         nt = Network('500px', '500px',notebook=True, directed=directed)
         st = self.simplex_tree

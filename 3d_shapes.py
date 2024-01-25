@@ -38,6 +38,8 @@ lr = tf.keras.optimizers.schedules.InverseTimeDecay(initial_learning_rate=float(
 n_epochs = int(sys.argv[10]) #200
 K = int(sys.argv[11]) #10
 
+np.random.seed(0)
+
 #shape = 'Octopus/132.off'
 #n_clusters = 8
 #resolutions = np.array([10])
@@ -62,7 +64,6 @@ dplot.save("results/" + name + "/3Dshape.html")
 
 pca = PCA(n_components=2)
 pca.fit(vertices)
-pca.components_
 
 params = tf.Variable(initial_value=np.array([[1],[1],[1]]).astype(np.float32)/np.sqrt(3), trainable=True)
 X = tf.Variable(initial_value=vertices.astype(np.float32), trainable=False)

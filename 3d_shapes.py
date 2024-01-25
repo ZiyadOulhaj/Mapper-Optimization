@@ -15,6 +15,9 @@ from pyvis.network import Network
 from SoftMapper import smooth_scheme, compute_mapper, filter_st
 import time
 from sklearn.decomposition import PCA
+import scipy.sparse.csgraph as scs
+import robust_laplacian as rlap
+import scipy as sp
 
 def off2numpy(shape_name):
     with open(shape_name, 'r') as S:
@@ -24,6 +27,18 @@ def off2numpy(shape_name):
     vertices = np.array([[float(coord) for coord in l.split(' ')] for l in info[0:num_vertices]])
     faces    = np.array([[int(coord) for coord in l.split(' ')[1:]] for l in info[num_vertices:]])
     return vertices, faces
+
+def get_adj_from_faces(faces, num_vertices):
+    NG = [[0 for _ in range(num_vertices)] for _ in range(num_vertices)]
+    for face in faces:
+        [i1, i2, i3] = face
+        NG[i1][i2] = 1
+        NG[i2][i1] = 1
+        NG[i1][i3] = 1
+        NG[i3][i1] = 1
+        NG[i3][i2] = 1
+        NG[i2][i3] = 1
+    return np.array(NG)
 
 path = "./3dshapes/"
 
@@ -37,6 +52,7 @@ sigma = float(sys.argv[6]) #0.01
 lr = tf.keras.optimizers.schedules.InverseTimeDecay(initial_learning_rate=float(sys.argv[7]), decay_steps=int(sys.argv[8]), decay_rate=float(sys.argv[9])) #5e-2 10 0.01
 n_epochs = int(sys.argv[10]) #200
 K = int(sys.argv[11]) #10
+mode = int(sys.argv[12]) #0
 
 np.random.seed(0)
 
@@ -55,7 +71,7 @@ np.random.seed(0)
 #lr = tf.keras.optimizers.schedules.InverseTimeDecay(initial_learning_rate=1e-1, decay_steps=10, decay_rate=.1)
 
 vertices, faces = off2numpy(path + shape)
-kmeans = KMeans(n_clusters=n_clusters, n_init='auto')
+kmeans = KMeans(n_clusters=n_clusters, n_init=10)
 
 mp.offline()
 dplot = mp.plot(vertices, faces, return_plot=True)
@@ -65,22 +81,49 @@ dplot.save("results/" + name + "/3Dshape.html")
 pca = PCA(n_components=2)
 pca.fit(vertices)
 
-params = tf.Variable(initial_value=np.array([[1],[1],[1]]).astype(np.float32)/np.sqrt(3), trainable=True)
 X = tf.Variable(initial_value=vertices.astype(np.float32), trainable=False)
-optimizer = tf.keras.optimizers.legacy.SGD(learning_rate=lr)
-f = tf.tensordot(X, params, axes=1)
+
+if mode == 0:
+    dimension = 3
+    params = tf.Variable(initial_value=np.ones([dimension,1]).astype(np.float32)/np.sqrt(dimension), trainable=True)
+    f = tf.tensordot(X, params, axes=1)
+elif mode == 1:
+    dimension = 200
+    laplacian, mass = rlap.mesh_laplacian(vertices, faces)
+    _, egvecs = sp.sparse.linalg.eigsh(laplacian, dimension, mass, sigma=1e-8)
+    params = tf.Variable(initial_value=np.ones([dimension,1]).astype(np.float32)/np.sqrt(dimension), trainable=True)
+    egv = tf.Variable(initial_value=egvecs.astype(np.float32), trainable=False)
+    f = tf.tensordot(egv, params, axes=1)
+elif mode == 2:
+    dimension = len(vertices)
+    adjacency = get_adj_from_faces(faces, dimension)
+    geodesics = scs.dijkstra(adjacency)
+    gram = np.exp(-geodesics)
+    G = tf.Variable(initial_value=gram.astype(np.float32), trainable=False)
+    params = tf.Variable(initial_value=np.ones([dimension,1]).astype(np.float32)/np.sqrt(dimension), trainable=True)
+    f = tf.tensordot(G, params, axes=1)
+
+    #egvals, _ = sp.linalg.eigh(gram)
+    #print(np.all(egvals >= 0))
 
 mapper = ParallelMapperComplex(colors=f.numpy(), filters=f.numpy(), resolutions=resolutions, gains=gain, clustering=kmeans)
 mapper.fit(vertices)
 nt = mapper.get_pyvis()
 nt.show("results/" + name + "/mapper_initial.html")
 
+optimizer = tf.keras.optimizers.legacy.SGD(learning_rate=lr)
 losses = []
 with Parallel(n_jobs=-1) as parallel:
 
     for epoch in tqdm(range(n_epochs+1)):
 
-        f = tf.tensordot(X, params, axes=1)
+        if mode == 0:
+            f = tf.tensordot(X, params, axes=1)
+        elif mode == 1:
+            f = tf.tensordot(egv, params, axes=1)
+        elif mode == 2:
+            f = tf.tensordot(G, params, axes=1)
+
         fn = (f - tf.math.reduce_min(f))/(tf.math.reduce_max(f) - tf.math.reduce_min(f))
         scheme = smooth_scheme(fn.numpy(), resolutions, gain, sigma)
         upscheme = np.repeat(scheme, K, axis=0)
@@ -89,7 +132,13 @@ with Parallel(n_jobs=-1) as parallel:
         
         with tf.GradientTape() as tape:
 
-            f = tf.tensordot(X, params, axes=1)
+            if mode == 0:
+                f = tf.tensordot(X, params, axes=1)
+            elif mode == 1:
+                f = tf.tensordot(egv, params, axes=1)
+            elif mode == 2:
+                f = tf.tensordot(G, params, axes=1)
+ 
             f_values = tf.repeat(tf.expand_dims(f, axis=0), clusters.shape[0], axis=0)
             f_values = tf.repeat(f_values, clusters.shape[2], axis=2)
 
@@ -110,7 +159,8 @@ with Parallel(n_jobs=-1) as parallel:
         gradients = tape.gradient(loss, [params])
         optimizer.apply_gradients(zip(gradients, [params]))
 
-print(params, tf.math.reduce_sum(params*np.array([[0],[0],[1]]))/tf.norm(params))
+if mode == 0:
+    print(params, tf.math.reduce_sum(params*np.array([[0],[0],[1]]))/tf.norm(params))
 
 plt.figure()
 plt.plot(losses)

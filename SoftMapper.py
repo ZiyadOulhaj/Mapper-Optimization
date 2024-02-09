@@ -6,8 +6,24 @@ from scipy.stats import bernoulli
 from scipy.linalg import block_diag
 
 
+
 def smooth_scheme(filters,resolutions,gain,sigma):
+    """
+    Implements the smooth cover assignment scheme for multidimensional filters. The filter values must be normalized beforehand to have values in [0,1].
+
+    Parameters:
+        filters (numpy array of shape (num_points) x (num_filters)): filter functions 
+            (sometimes called lenses) used to compute the cover. Each column of the numpy array 
+            defines a scalar function having values in [0,1] defined on the input points.
+        resolutions (numpy array of shape num_filters containing integers): resolution of 
+            each filter function, ie number of intervals required to cover each filter image.
+        gain (numpy array of shape num_filters containing doubles in [0,1]): gain of 
+            each filter function, ie overlap percentage of the intervals covering each filter image.
+        sigma (float): sigma (also denoted delta) parameter used to construct the smooth assignment scheme.
     
+    Returns:
+        scheme (numpy array of shape (num_filters) x (resolution) x (num_points)): Bernoulli parameters of the smooth assignment scheme.
+    """
     num_pts,num_filters=filters.shape
     
     # Compute the endpoints of the cover intervals for all filters 
@@ -25,9 +41,10 @@ def smooth_scheme(filters,resolutions,gain,sigma):
     right_endpoints=steps*(column_indices+1)+epsilons
     B=np.repeat(right_endpoints.reshape((num_filters,resolutions.max(),1)),num_pts,axis=2)
 
-    # Find in which interval each point falls for each filter
+    # Construct the filter_values array that 
     filter_values=np.repeat(filters.T.reshape(num_filters,1,num_pts),resolutions.max(),axis=1)
-
+    
+    # Compute the probability of each point being in each patch
     G1=1-1/(1-(filter_values-A)**2/sigma**2)
     G1[G1>0]=-np.inf
     G1=np.exp(G1)
@@ -43,6 +60,23 @@ def smooth_scheme(filters,resolutions,gain,sigma):
 
 
 def cluster_patch(Binned_data,k,p_ind,X,clustering,maximum,input_type):
+    """
+    Clusters a patch. Used to compute multiple Mappers in parallel.
+
+    Parameters:
+        Binned_data (list of length num_mappers containing lists of length resolution): list containing the indexes of data points located in each patch for each Mapper
+        k (integer): index of Mapper
+        p_ind (integer): index of patch
+        X (numpy array of shape (num_points) x (num_coordinates) if point cloud and (num_points) x (num_points) if distance matrix): input point cloud or distance matrix.
+        clustering (class): clustering class. Common clustering classes can be found in the scikit-learn library (such as AgglomerativeClustering for instance).
+        maximum (integer): maximum number of clusters possible in one patch.
+        input_type (string): type of input data. Either "point cloud" or "distance matrix".
+    
+    Returns:
+        clusters (numpy array of shape (n_samples,)): Index of the cluster each point in the patch belongs to.
+        k (integer): index of Mapper
+        p_ind (integer): index of patch
+    """
     data_bin=Binned_data[k][p_ind]
     if len(data_bin) > 1:
         clusters = clustering.fit_predict(X[data_bin,:]) if input_type == "point cloud" \
@@ -55,12 +89,26 @@ def cluster_patch(Binned_data,k,p_ind,X,clustering,maximum,input_type):
     return clusters,k,p_ind
 
 def compute_mapper(X,clustering,assignments,input_type="point cloud",maximum=3):
+    """
+    Computes Mappers belonging to several cover assignments in Parallel. Only supports one dimensional filters.
 
+    Parameters:
+        X (numpy array of shape (num_points) x (num_coordinates) if point cloud and (num_points) x (num_points) if distance matrix): input point cloud or distance matrix.
+        clustering (class): clustering class. Common clustering classes can be found in the scikit-learn library (such as AgglomerativeClustering for instance).
+        assignments (numpy array of shape (num_mappers) x (resolution) x (num_points) containing values in {0,1}): Cover assignments for each Mapper.
+        input_type (string): type of input data. Either "point cloud" or "distance matrix".
+        maximum (integer): maximum number of clusters possible in one patch.
+    
+    Returns:
+        simplex_trees (list of gd.SimplexTree() instances of length num_mappers): list of Mapper simplicial complexes represented by gudhi Simplex Trees. For computational efficiency considerations, empty clusters are present as isolated vertices in the simplicial complexes.
+        clusters_array (numpy array of shape (num_mappers) x (num_points) x (maximum x resolution) containing values in {0,1}): Belongings, encoded as ones and zeros, of the points to the clusters in each Mapper.
+    """
     K,resolution,num_pts=assignments.shape
     
     st0=gd.SimplexTree()
     st0.insert_batch((np.array(range(maximum*resolution))[np.newaxis,:]),np.zeros((maximum*resolution,)))
     
+    # Initialize the list of simplex trees coreresponding to the Mappers and the clusters_array that gives the belongings of the points to the clusters in each Mapper.
     simplex_trees, clusters_array = [gd.SimplexTree(st0) for k in range(K)], np.zeros((K,num_pts,maximum*resolution))
 
     # Compute the Binned data map that associates each patch to the points that belong to it
@@ -70,15 +118,19 @@ def compute_mapper(X,clustering,assignments,input_type="point cloud",maximum=3):
     # Compute the clustering in each patch in parallel
     clusters_list = Parallel(n_jobs=-1)(delayed(cluster_patch)(Binned_data, k, p, X, clustering,maximum,input_type) for k,p in itertools.product(range(K),range(resolution)))
 
+    # Fill the clusters_array
     for v in clusters_list :
         if v[0].size!=0:
             clusters_array[v[1],Binned_data[v[1]][v[2]],v[0]]=1 
-
+    
+    # Find clusters with non-empty intersection using matrix product
     M=np.matmul(np.transpose(clusters_array,axes=(0,2,1)),clusters_array)
     
     M[:,range(M.shape[1]),range(M.shape[1])]=0
     for k in range(K):
         M[k,np.triu_indices(M.shape[1])[0],np.triu_indices(M.shape[1])[1]]=0 
+    
+    # Fill the simplex trees
     for splx in zip(*np.where(M!=0)):
         simplex_trees[splx[0]].insert(splx[1:])
         
@@ -118,6 +170,16 @@ def _LowerStarSimplexTree(simplextree, filtration, dimensions, homology_coeff_fi
     return L_indices
 
 def filter_st(sklt,f):
+    """
+    Gives the filtration indices corresponding to the finite regular persistence diagram in dimension 0 for a Mapper complex.
+
+    Parameters:
+        sklt (list of tuples (simplex,)): one-skeleton of the simplex tree corresponding to the Mapper complex.
+        f (numpy array of shape num_vertices): filtration value on the vertices of the Mapper.
+    
+    Returns:
+        diagram (numpy array of shape (diagram_size,2)): filtration indices corresponding to the finite regular persistence diagram in dimension 0 of the Mapper complex.
+    """
     st=gd.SimplexTree()
     for splx in sklt:
         st.insert(splx[0])
@@ -197,6 +259,16 @@ def _ExtendedSimplexTree(simplextree, filtration, dimensions, homology_coeff_fie
 
 
 def filter_extended_st(sklt,f):
+    """
+    Gives the filtration indices corresponding to the finite extended persistence diagram in dimension 0 and dimension 1 (stacked) for a Mapper complex.
+
+    Parameters:
+        sklt (list of tuples (simplex,)): one-skeleton of the simplex tree corresponding to the Mapper complex.
+        f (numpy array of shape num_vertices): filtration value on the vertices of the Mapper.
+    
+    Returns:
+        diagram (numpy array of shape (diagram_size,2)): filtration indices corresponding to the finite regular persistence diagram in dimension 0 and dimension 1 (stacked) of the Mapper complex.
+    """
     st=gd.SimplexTree()
     for splx in sklt:
         st.insert(splx[0])

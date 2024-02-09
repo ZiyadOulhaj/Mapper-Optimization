@@ -46,8 +46,6 @@ class MapperComplex(BaseEstimator, TransformerMixin):
         self.gains, self.colors, self.clustering = gains, colors, clustering
         self.input_type = input_type
 
-
-    
     def get_pyvis(self, directed=False, cmap=cm.viridis):
         """
         Turn the 1-skeleton of the cover complex computed after calling fit() method into a pyvis graph.
@@ -151,7 +149,7 @@ class MapperComplex(BaseEstimator, TransformerMixin):
 
         
         # Compute the clustering in each patch in parallel
-        clusters_list = Parallel(n_jobs=-1)(delayed(cluster_patch)(Binned_data, p_ind) for p_ind in range(len(patches)))
+        clusters_list = Parallel(n_jobs=-1,backend="threading")(delayed(cluster_patch)(Binned_data, p_ind) for p_ind in range(len(patches)))
         
         # Go through the list of clusters
         current_max=0

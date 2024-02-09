@@ -18,7 +18,7 @@ Datasets for the 3-dimensional shapes.
 
 Normalized expression matrix for the human preimplantation dataset.
 
-## 3d_shapes_.ipynb
+## 3d_shapes.ipynb
 
 Notebook that implements filter optimization for 3-dimensional shapes.
 

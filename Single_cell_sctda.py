@@ -113,7 +113,7 @@ delta = np.max([directed_hausdorff(X, X[subset,:]), directed_hausdorff(X[subset,
 ag = AgglomerativeClustering(n_clusters=None, distance_threshold=8e-2*delta)
 params = tf.Variable(initial_value=np.ones((p,1)).astype(np.float32)/np.sqrt(p), trainable=True)
 lr = tf.keras.optimizers.schedules.InverseTimeDecay(initial_learning_rate=initial_learning_rate, decay_steps=decay_steps, decay_rate=decay_rate)
-optimizer = tf.keras.optimizers.legacy.SGD(learning_rate=lr)
+optimizer = tf.keras.optimizers.SGD(learning_rate=lr)
 
 f = tf.tensordot(X.astype(np.float32), params, axes=1)
 mapperbase = MapperComplex(colors=np.hstack([np.array(timepoints).reshape((-1,1)), X, Xpca, Xtsne, Xumap]), filters=f.numpy(), resolutions=resolutions, gains=gains, clustering=ag)

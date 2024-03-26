@@ -102,6 +102,18 @@ tsne = TSNE(n_components=2)
 Xtsne = tsne.fit_transform(vertices)
 Ctsne = pairwise_distances(Xtsne)
 
+plt.figure()
+plt.scatter(Xpca[:,0], Xpca[:,1], s=1)
+plt.show()
+
+plt.figure()
+plt.scatter(Xtsne[:,0], Xtsne[:,1], s=1)
+plt.show()
+
+plt.figure()
+plt.scatter(Xumap[:,0], Xumap[:,1], s=1)
+plt.show()
+
 kmeans = KMeans(n_clusters=n_clusters, n_init=10)
 
 mp.offline()

@@ -60,19 +60,53 @@ class MapperComplex(BaseEstimator, TransformerMixin):
         """
         nt = Network('500px', '500px',notebook=True, directed=directed)
         st = self.simplex_tree
-        c_vals=[float(node['colors']) for node in self.node_info.values()]
+        c_vals=[float(node['colors'][0]) for node in self.node_info.values()]
         norm = mpl.colors.Normalize(vmin=np.min(c_vals), vmax=np.max(c_vals))
         m = cm.ScalarMappable(norm=norm,  cmap=cmap)
         for (splx,_) in st.get_skeleton(0):
-            nt.add_node(splx[0],color=to_hex(m.to_rgba(float(self.node_info[splx[0]]["colors"])
+            nt.add_node(splx[0],color=to_hex(m.to_rgba(float(self.node_info[splx[0]]["colors"][0])
                                                    ,bytes=True)[0:3]))
         for (splx,_) in st.get_skeleton(1):
             if len(splx) == 2:
-                if self.node_info[splx[0]]["colors"]<=self.node_info[splx[1]]["colors"]:
+                if self.node_info[splx[0]]["colors"][0]<=self.node_info[splx[1]]["colors"][0]:
                     nt.add_edge(splx[0], splx[1])
                 else:
                     nt.add_edge(splx[1], splx[0])
         return nt
+
+    def get_networkx(self, dimension=3, set_attributes_from_colors=False):
+        """
+        Turn the 1-skeleton of the cover complex computed after calling fit() method into a networkx graph.
+        This function requires networkx (https://networkx.org/documentation/stable/install.html).
+
+        Parameters
+        ----------
+        set_attributes_from_colors : bool
+            if True, the color functions will be used as attributes for the networkx graph.
+
+        Returns
+        -------
+        G : networkx graph
+            graph representing the 1-skeleton of the cover complex.
+        """
+        st = self.simplex_tree
+        G = nx.Graph()
+        for (splx,_) in st.get_skeleton(1):	
+            if len(splx) == 1:
+                G.add_node(splx[0])
+            if len(splx) == 2:
+                G.add_edge(splx[0], splx[1], filter_length = np.abs(self.node_info[splx[0]]["colors"][0] - self.node_info[splx[1]]["colors"][0]), 
+                                             data_length   = np.linalg.norm(self.node_info[splx[0]]["colors"][1:dimension+1] - self.node_info[splx[1]]["colors"][1:dimension+1]),
+                                             pca_length    = np.linalg.norm(self.node_info[splx[0]]["colors"][dimension+1:dimension+3] - self.node_info[splx[1]]["colors"][dimension+1:dimension+3]),
+                                             tsne_length   = np.linalg.norm(self.node_info[splx[0]]["colors"][dimension+3:dimension+5] - self.node_info[splx[1]]["colors"][dimension+3:dimension+5]),
+                                             umap_length   = np.linalg.norm(self.node_info[splx[0]]["colors"][dimension+5:dimension+7] - self.node_info[splx[1]]["colors"][dimension+5:dimension+7]))
+        if set_attributes_from_colors:
+            attrs = {k: {"attr_name": self.node_info[k]["colors"]} for k in G.nodes()}
+            nx.set_node_attributes(G, attrs)
+        Af, Ad, Ap, At, Au = nx.adjacency_matrix(G, weight='filter_length'), nx.adjacency_matrix(G, weight='data_length'), nx.adjacency_matrix(G, weight='pca_length'), nx.adjacency_matrix(G, weight='tsne_length'), nx.adjacency_matrix(G, weight='umap_length')
+        return G, Af, Ad, Ap, At, Au
+
+    
 
     def fit(self, X, y=None):
         """

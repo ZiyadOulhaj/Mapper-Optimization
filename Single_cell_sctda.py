@@ -2,62 +2,43 @@ import os
 import sys
 import itertools
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 import numpy as np
 import scipy as sp
 import pickle as pck
+import pandas as pd
 import tensorflow as tf
 import meshplot as mp
 import gudhi as gd
 import scipy.sparse.csgraph as scs
+import seaborn as sns
 import robust_laplacian as rlap
 
 from tqdm import tqdm
 from time import time
-from scipy.stats import bernoulli
+from scipy.spatial.distance import directed_hausdorff
+from scipy.stats import bernoulli, pearsonr
 from joblib import Parallel, delayed
 from pyvis.network import Network
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, AgglomerativeClustering
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from sklearn.metrics import pairwise_distances
 from umap import UMAP
 
-from mapper import MapperComplex as ParallelMapperComplex
-from SoftMapper import smooth_scheme, compute_mapper, filter_st
+from mapper import MapperComplex
+from SoftMapper import smooth_scheme, compute_mapper, filter_extended_st
 
-def off2numpy(shape_name):
-    with open(shape_name, 'r') as S:
-        S.readline()
-        num_vertices, num_faces, _ = [int(n) for n in S.readline().split(' ')]
-        info = S.readlines()
-    vertices = np.array([[float(coord) for coord in l.split(' ')] for l in info[0:num_vertices]])
-    faces    = np.array([[int(coord) for coord in l.split(' ')[1:]] for l in info[num_vertices:]])
-    return vertices, faces
+name = sys.argv[1] #'sctda'
 
-def get_adj_from_faces(faces, num_vertices):
-    NG = [[0 for _ in range(num_vertices)] for _ in range(num_vertices)]
-    for face in faces:
-        [i1, i2, i3] = face
-        NG[i1][i2] = 1
-        NG[i2][i1] = 1
-        NG[i1][i3] = 1
-        NG[i3][i1] = 1
-        NG[i3][i2] = 1
-        NG[i2][i3] = 1
-    return np.array(NG)
-
-path = "./3dshapes/"
-
-name = sys.argv[1] #'human10'
-
-shape = sys.argv[2] #'Human/10.off'
+path = sys.argv[2] #'Datasets/scTDA/'
 n_clusters = int(sys.argv[3]) #3
 resolutions = np.array([int(i) for i in sys.argv[4].split('-')]) #25
 gains = np.array([float(g) for g in sys.argv[5].split('-')]) #0.3
-sigma = float(sys.argv[6]) #0.01
-initial_learning_rate = float(sys.argv[7]) #5e-2
+sigma = float(sys.argv[6]) #1e-5
+initial_learning_rate = float(sys.argv[7]) #5e-4
 decay_steps = int(sys.argv[8]) #10
-decay_rate = float(sys.argv[9]) #0.1
+decay_rate = float(sys.argv[9]) #1
 n_epochs = int(sys.argv[10]) #200
 K = int(sys.argv[11]) #10
 mode = int(sys.argv[12]) #0
@@ -65,7 +46,7 @@ num_filtrations = int(sys.argv[13]) #1
 idx_filtration = int(sys.argv[14]) #0
 
 params = {
-'shape': shape,
+'shape': path,
 'n_clusters': n_clusters,
 'resolutions': resolutions,
 'gains': gains,
@@ -83,62 +64,64 @@ params = {
 os.system('mkdir ' + 'results/' + name)
 pck.dump(params, open('results/' + name + '/params.pkl', 'wb'))
 
-np.random.seed(0)
+# Import data
 
-vertices, faces = off2numpy(path + shape)
-dimension = len(vertices)
-adjacency = get_adj_from_faces(faces, dimension)
-geodesics = scs.dijkstra(adjacency)
+files = []
+cells = []
+libs = []
+days = []
+with open(path + 'data.txt', 'r') as f:
+    for line in f:
+        sp = line[:-1].split('\t')
+        files.append(sp[0])
+        cells.append(int(sp[1]))
+        libs.append(sp[2])
+        days.append(int(sp[3]))
+
+timepoints, dfs = [], []
+for i in range(len(files)):
+    f = files[i]
+    dfs.append(pd.read_csv(path + f, sep="\t", header=None, index_col=0))
+    timepoints = timepoints + [days[i]]*dfs[i].shape[1]
+df = (pd.concat(dfs,axis=1)).transpose()
+
+# Preprocessed data using Seurat in R
+
+dfn = pd.read_csv(r"Datasets/seurat_normalized.csv",index_col=0).transpose()
+X = np.array(dfn)
+(n,p) = X.shape
+
+C1 = pairwise_distances(X)
 
 pca = PCA(n_components=2)
-Xpca = pca.fit_transform(vertices)
+Xpca = pca.fit_transform(X)
 Cpca = pairwise_distances(Xpca)
 
 umap = UMAP(n_components=2)
-Xumap = umap.fit_transform(vertices)
+Xumap = umap.fit_transform(X)
 Cumap = pairwise_distances(Xumap)
 
 tsne = TSNE(n_components=2)
-Xtsne = tsne.fit_transform(vertices)
+Xtsne = tsne.fit_transform(X)
 Ctsne = pairwise_distances(Xtsne)
 
-kmeans = KMeans(n_clusters=n_clusters, n_init=10)
+# Linear filter optimization
 
-mp.offline()
-dplot = mp.plot(vertices, faces, return_plot=True)
-os.system('rm *.html')
-dplot.save("results/" + name + "/3Dshape.html")
+np.random.seed(1)
+subset = np.random.randint(low=0, high=len(timepoints), size=500)
+delta = np.max([directed_hausdorff(X, X[subset,:]), directed_hausdorff(X[subset,:], X)])
+ag = AgglomerativeClustering(n_clusters=None, distance_threshold=8e-2*delta)
+params = tf.Variable(initial_value=np.ones((p,1)).astype(np.float32)/np.sqrt(p), trainable=True)
+lr = tf.keras.optimizers.schedules.InverseTimeDecay(initial_learning_rate=initial_learning_rate, decay_steps=decay_steps, decay_rate=decay_rate)
+optimizer = tf.keras.optimizers.legacy.SGD(learning_rate=lr)
 
-X = tf.Variable(initial_value=vertices.astype(np.float32), trainable=False)
-
-if mode == 0:
-    dimension = 3
-    params = tf.Variable(initial_value=np.ones([dimension,num_filtrations]).astype(np.float32)/np.sqrt(dimension), trainable=True)
-    f = tf.tensordot(X, params, axes=1)
-elif mode == 1:
-    dimension = 200
-    laplacian, mass = rlap.mesh_laplacian(vertices, faces)
-    _, egvecs = sp.sparse.linalg.eigsh(laplacian, dimension, mass, sigma=1e-8)
-    params = tf.Variable(initial_value=np.ones([dimension,num_filtrations]).astype(np.float32)/np.sqrt(dimension), trainable=True)
-    egv = tf.Variable(initial_value=egvecs.astype(np.float32), trainable=False)
-    f = tf.tensordot(egv, params, axes=1)
-elif mode == 2:
-    gram = np.exp(-geodesics)
-    G = tf.Variable(initial_value=gram.astype(np.float32), trainable=False)
-    params = tf.Variable(initial_value=np.ones([dimension,num_filtrations]).astype(np.float32)/np.sqrt(dimension), trainable=True)
-    f = tf.tensordot(G, params, axes=1)
-
-    #egvals, _ = sp.linalg.eigh(gram)
-    #print(np.all(egvals >= 0))
-
-C1 = geodesics #pairwise_distances(vertices)
-
-mapperbase = ParallelMapperComplex(colors=np.hstack([f.numpy(), vertices, Xpca, Xtsne, Xumap]), filters=f.numpy(), resolutions=resolutions, gains=gains, clustering=kmeans)
-mapperbase.fit(vertices)
+f = tf.tensordot(X.astype(np.float32), params, axes=1)
+mapperbase = MapperComplex(colors=np.hstack([np.array(timepoints).reshape((-1,1)), X, Xpca, Xtsne, Xumap]), filters=f.numpy(), resolutions=resolutions, gains=gains, clustering=ag)
+mapperbase.fit(X)
 nt = mapperbase.get_pyvis()
-nt.show("results/" + name + "/mapper_initial.html")
+nt.show('sctda_initial.html')
 
-Gbase, Afbase, Adbase, Apbase, Atbase, Aubase = mapperbase.get_networkx(dimension=3)
+Gbase, Afbase, Adbase, Apbase, Atbase, Aubase = mapperbase.get_networkx(dimension=p)
 Cmapperbf = scs.dijkstra(Afbase.todense(), directed=False)
 Cmapperbd = scs.dijkstra(Adbase.todense(), directed=False)
 Cmapperbp = scs.dijkstra(Apbase.todense(), directed=False)
@@ -149,8 +132,12 @@ for k in Gbase.nodes():
     for idx_pt in mapperbase.node_info[k]["indices"]:
         Tbase[idx_pt, k] = 1
 
-lr = tf.keras.optimizers.schedules.InverseTimeDecay(initial_learning_rate=initial_learning_rate, decay_steps=decay_steps, decay_rate=decay_rate)
-optimizer = tf.keras.optimizers.legacy.SGD(learning_rate=lr)
+dff = pd.DataFrame(list(zip(timepoints, list(f.numpy().ravel()))), columns=['time', 'filter'])
+ax = sns.displot(dff, x="filter", hue="time", kind="kde", palette=cm.viridis)
+ax.set(xlabel=None, ylabel=None)
+sns.move_legend(ax, "lower center", bbox_to_anchor=(.5, 0), ncol=5, title=None, frameon=False)
+plt.savefig('sctda_densities_initial.png')
+
 losses, times = [], []
 with Parallel(n_jobs=-1) as parallel:
 
@@ -158,39 +145,24 @@ with Parallel(n_jobs=-1) as parallel:
 
         start = time()
 
-        if mode == 0:
-            f = tf.tensordot(X, params, axes=1)
-        elif mode == 1:
-            f = tf.tensordot(egv, params, axes=1)
-        elif mode == 2:
-            f = tf.tensordot(G, params, axes=1)
-
+        f = tf.tensordot(X.astype(np.float32),params,axes=1)
         fn = (f - tf.math.reduce_min(f))/(tf.math.reduce_max(f) - tf.math.reduce_min(f))
         scheme = smooth_scheme(fn.numpy(), resolutions, gains, sigma)
         upscheme = np.repeat(scheme, K, axis=0)
-        assignments = bernoulli.rvs(upscheme)
-        st, clusters = compute_mapper(X.numpy(), kmeans, assignments, "point cloud", n_clusters)
+        assignments = bernoulli.rvs(upscheme, random_state=0)
+        st, clusters = compute_mapper(X, ag, assignments, maximum=5)
         
         with tf.GradientTape() as tape:
-
-            if mode == 0:
-                f = tf.tensordot(X, params, axes=1)
-            elif mode == 1:
-                f = tf.tensordot(egv, params, axes=1)
-            elif mode == 2:
-                f = tf.tensordot(G, params, axes=1)
- 
+            f = tf.tensordot(X.astype(np.float32), params, axes=1)
             f_values = tf.repeat(tf.expand_dims(f, axis=0), clusters.shape[0], axis=0)
-            f_values = tf.repeat(f_values[:,:,idx_filtration:idx_filtration+1], clusters.shape[2], axis=2)
-            clus_sums = np.sum(clusters,axis=1)
-            clus_sums = np.where(clus_sums == 0, np.ones(clus_sums.shape), clus_sums)
-            filtration = tf.math.reduce_sum(f_values*clusters, axis=1)/clus_sums
-            l = parallel(delayed(filter_st)(list(st[k].get_skeleton(1)), filtration.numpy()[k]) for k in range(K))
+            f_values = tf.repeat(f_values, clusters.shape[2], axis=2)
+            filtration = tf.math.reduce_sum(f_values*clusters, axis=1)/(np.sum(clusters, axis=1) + 1e-10)
+            l = parallel(delayed(filter_extended_st)(list(st[k].get_skeleton(1)), filtration.numpy()[k]) for k in range(K))
             loss = 0
             
             for k in range(K):
-                dgm = tf.gather(filtration[k], l[k]) 
-                loss = loss - tf.math.reduce_sum(tf.math.abs((dgm[:,1] - dgm[:,0])))/K
+                dgm = tf.gather(filtration[k],l[k]) 
+                loss = loss - tf.math.reduce_sum(tf.math.abs((dgm[:,1]-dgm[:,0])))/K
 
             regularization = tf.math.square(tf.norm(params) - 1)
             loss = loss + regularization
@@ -198,22 +170,24 @@ with Parallel(n_jobs=-1) as parallel:
         end = time()
 
         times.append(end-start)
-        losses.append(loss.numpy())
         gradients = tape.gradient(loss, [params])
         optimizer.apply_gradients(zip(gradients, [params]))
+        losses.append(loss.numpy())
 
 plt.figure()
 plt.plot(losses)
 plt.xlabel('Epochs')
 plt.ylabel('Loss')
-plt.savefig('results/' + name + '/loss')
+plt.show()
 
-mapper = ParallelMapperComplex(colors=np.hstack([f.numpy(), vertices, Xpca, Xtsne, Xumap]), filters=f.numpy(), resolutions=resolutions, gains=gains, clustering=kmeans)
-mapper.fit(vertices)
+tf.norm(params)
+
+mapper = MapperComplex(colors=np.hstack([np.array(timepoints).reshape((-1,1)), X, Xpca, Xtsne, Xumap]), filters=f.numpy(), resolutions=resolutions, gains=gains, clustering=ag)
+mapper.fit(X)
 nt = mapper.get_pyvis()
-nt.show("results/" + name + "/mapper_final.html")
+nt.show('sctda_final.html')
 
-G, Af, Ad, Ap, At, Au = mapper.get_networkx(dimension=3)
+G, Af, Ad, Ap, At, Au = mapper.get_networkx(dimension=p)
 Cmapperf = scs.dijkstra(Af.todense(), directed=False)
 Cmapperd = scs.dijkstra(Ad.todense(), directed=False)
 Cmapperp = scs.dijkstra(Ap.todense(), directed=False)
@@ -269,18 +243,24 @@ print(cost_pca,  cost_mapperbp, cost_mapperp)
 print(cost_tsne, cost_mapperbt, cost_mappert)
 print(cost_umap, cost_mapperbu, cost_mapperu)
 
-plt.figure()
-plt.hist(scheme.ravel())
-plt.savefig('results/' + name + '/hist')
+dff = pd.DataFrame(list(zip(timepoints, list(f.numpy().ravel()))), columns =['time', 'filter'])
+ax = sns.displot(dff, x="filter", hue="time", kind="kde", palette=cm.viridis)
+ax.set(xlabel=None, ylabel=None)
+sns.move_legend(ax, "lower center", bbox_to_anchor=(.5, 0), ncol=5, title=None, frameon=False)
+plt.savefig('sctda_densities_final.png')
 
-plt.figure()
-order = np.argsort(fn.numpy(), axis=0)
-plt.plot(fn.numpy()[order.ravel()], scheme[0,3,:][order], c='b');
-plt.plot(fn.numpy()[order.ravel()], scheme[0,4,:][order], c='r');
-plt.savefig('results/' + name + '/scheme')
+initialparams = tf.Variable(initial_value=np.ones((p,1)).astype(np.float32)/np.sqrt(p), trainable=True)
+fi = tf.tensordot(X.astype(np.float32), initialparams, axes=1)
 
-corrf = tf.math.reduce_sum(params.numpy()[:,0:1]*np.array([[0],[0],[1]]))/tf.norm(params)
-print(corrf.numpy())
+corrfi,    corrf     = pearsonr(fi.numpy()[:,0], timepoints), pearsonr(f.numpy()[:,0], timepoints)
+corrpca0,  corrpca1  = pearsonr(Xpca[:,0],       timepoints), pearsonr(Xpca[:,1],      timepoints)
+corrtsne0, corrtsne1 = pearsonr(Xtsne[:,0],      timepoints), pearsonr(Xtsne[:,1],     timepoints)
+corrumap0, corrumap1 = pearsonr(Xumap[:,0],      timepoints), pearsonr(Xumap[:,1],     timepoints)
+
+print(corrfi,    corrf)
+print(corrpca0,  corrpca1)
+print(corrtsne0, corrtsne1)
+print(corrumap0, corrumap1)
 
 results = {
 'filter': params.numpy(),
@@ -303,8 +283,20 @@ results = {
 'cost_mapperp': cost_mapperp,
 'cost_mappert': cost_mappert,
 'cost_mapperu': cost_mapperu,
-'corrf': corrf.numpy(),
+'corr_mapper': [corrfi, corrf],
+'corr_pca': [corrpca0, corrpca1],
+'corr_tsne': [corrtsne0, corrtsne1],
+'corr_umap': [corrumap0, corrumap1],
 }
 
 pck.dump(results, open('results/' + name + '/results.pkl', 'wb'))
 
+mapper = MapperComplex(colors=np.array(dfn['HTR3E']).reshape((-1,1)), filters=f.numpy(), resolutions=resolutions, gains=gains, clustering=ag)
+mapper.fit(X)
+nt = mapper.get_pyvis(cmap=cm.hot)
+nt.show('sctda_gene1.html')
+
+mapper = MapperComplex(colors=np.array(dfn['CDX1']).reshape((-1,1)), filters=f.numpy(), resolutions=resolutions, gains=gains, clustering=ag)
+mapper.fit(X)
+nt = mapper.get_pyvis(cmap=cm.hot)
+nt.show('sctda_gene2.html')

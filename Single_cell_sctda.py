@@ -215,7 +215,7 @@ for idx_m, matrix in enumerate(matrices):
     matrix_clus = matrix[good_idxs,:][:,good_idxs]
     clustering_mapper.fit(matrix_clus)
     if idx_m <= 4:
-        for idx_pt in range(len(vertices)):
+        for idx_pt in range(len(X)):
             nodes = np.argwhere(Tbase[idx_pt])
             inter, _, idxs2 = np.intersect1d(nodes, good_idxs, return_indices=True)
             if len(inter) > 0:
@@ -223,7 +223,7 @@ for idx_m, matrix in enumerate(matrices):
             else:
                 clus_labels[idx_pt] = clustering_mapper.labels_[0]
     else:
-        for idx_pt in range(len(vertices)):
+        for idx_pt in range(len(X)):
             nodes = np.argwhere(T[idx_pt])
             inter, _, idxs2 = np.intersect1d(nodes, good_idxs, return_indices=True)
             if len(inter) > 0:

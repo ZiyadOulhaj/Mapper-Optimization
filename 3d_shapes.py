@@ -19,7 +19,7 @@ from pyvis.network import Network
 from sklearn.cluster import KMeans, AgglomerativeClustering
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
-from sklearn.metrics import pairwise_distances, adjusted_rand_score
+from sklearn.metrics import *
 from sklearn.preprocessing import LabelEncoder
 from umap import UMAP
 
@@ -99,6 +99,8 @@ params = {
 
 os.system('mkdir ' + 'results/' + name)
 pck.dump(params, open('results/' + name + '/params.pkl', 'wb'))
+
+score_fns = [adjusted_rand_score, adjusted_mutual_info_score]
 
 np.random.seed(0)
 
@@ -250,12 +252,6 @@ for i in range(0,C1.shape[0],100):
             else:
                 costs[idx_m] = max(costs[idx_m], np.multiply( (T[i:i+1,:].T).dot(T[j:j+1,:]), np.abs(matrix_cost - C1[i,j]) ).max())
 
-print(costs[0], costs[5])
-print(costs[1], costs[6])
-print(costs_baseline[0], costs[2], costs[7])
-print(costs_baseline[1], costs[3], costs[8])
-print(costs_baseline[2], costs[4], costs[9])
-
 scores_baseline = [0., 0., 0.]
 scores = [0. for _ in range(len(matrices))]
 n_clusters = len(np.unique(label_points))
@@ -290,16 +286,9 @@ for idx_m, matrix in enumerate(matrices):
                 clus_labels[idx_pt] = clustering_mapper.labels_[idxs2[0]]
             else:
                 clus_labels[idx_pt] = clustering_mapper.labels_[0]
-    scores[idx_m] = adjusted_rand_score(label_points, clus_labels)
-
-print(scores[0], scores[5])
-print(scores[1], scores[6])
-print(scores_baseline[0], scores[2], scores[7])
-print(scores_baseline[1], scores[3], scores[8])
-print(scores_baseline[2], scores[4], scores[9])
+    scores[idx_m] = [score_fn(label_points, clus_labels) for score_fn in score_fns]
 
 corrf = (tf.math.reduce_sum(params.numpy()[:,0:1]*np.array([[0.],[0.],[1.]], dtype=np.float32))/tf.norm(params)).numpy()
-print(corrf)
 
 results = {
 'filter': params.numpy(),

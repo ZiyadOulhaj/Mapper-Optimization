@@ -16,10 +16,11 @@ from time import time
 from scipy.stats import bernoulli
 from joblib import Parallel, delayed
 from pyvis.network import Network
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, AgglomerativeClustering
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
-from sklearn.metrics import pairwise_distances
+from sklearn.metrics import pairwise_distances, adjusted_rand_score
+from sklearn.preprocessing import LabelEncoder
 from umap import UMAP
 
 from mapper import MapperComplex as ParallelMapperComplex
@@ -45,6 +46,22 @@ def get_adj_from_faces(faces, num_vertices):
         NG[i3][i2] = 1
         NG[i2][i3] = 1
     return np.array(NG)
+
+def get_labels(label_name, num_faces):
+    L = np.empty([num_faces], dtype='|S100')
+    with open(label_name, 'r') as S:
+        info = S.readlines()
+    labels, face_indices = info[0::2], info[1::2]
+    for ilab, lab in enumerate(labels):
+        indices = [int(f)-1 for f in face_indices[ilab].split(' ')[:-1]]
+        L[  np.array(indices)  ] = lab[:-1]
+    return L
+
+def face2points(vals_faces, faces, num_vertices):
+    vals_points = np.empty([num_vertices], dtype=type(vals_faces))
+    for iface, face in enumerate(faces):
+        vals_points[face] = vals_faces[iface]
+    return vals_points
 
 path = "./3dshapes/"
 
@@ -89,6 +106,8 @@ vertices, faces = off2numpy(path + shape)
 dimension = len(vertices)
 adjacency = get_adj_from_faces(faces, dimension)
 geodesics = scs.dijkstra(adjacency)
+label_faces = get_labels(path + shape[:-4] + '_labels.txt', len(faces))
+label_points = LabelEncoder().fit_transform(face2points(label_faces, faces, len(vertices)))
 
 pca = PCA(n_components=2)
 Xpca = pca.fit_transform(vertices)
@@ -101,18 +120,6 @@ Cumap = pairwise_distances(Xumap)
 tsne = TSNE(n_components=2)
 Xtsne = tsne.fit_transform(vertices)
 Ctsne = pairwise_distances(Xtsne)
-
-plt.figure()
-plt.scatter(Xpca[:,0], Xpca[:,1], s=1)
-plt.show()
-
-plt.figure()
-plt.scatter(Xtsne[:,0], Xtsne[:,1], s=1)
-plt.show()
-
-plt.figure()
-plt.scatter(Xumap[:,0], Xumap[:,1], s=1)
-plt.show()
 
 kmeans = KMeans(n_clusters=n_clusters, n_init=10)
 
@@ -147,8 +154,6 @@ C1 = geodesics #pairwise_distances(vertices)
 
 mapperbase = ParallelMapperComplex(colors=np.hstack([f.numpy(), vertices, Xpca, Xtsne, Xumap]), filters=f.numpy(), resolutions=resolutions, gains=gains, clustering=kmeans)
 mapperbase.fit(vertices)
-nt = mapperbase.get_pyvis()
-nt.show("results/" + name + "/mapper_initial.html")
 
 Gbase, Afbase, Adbase, Apbase, Atbase, Aubase = mapperbase.get_networkx(dimension=3)
 Cmapperbf = scs.dijkstra(Afbase.todense(), directed=False)
@@ -214,16 +219,8 @@ with Parallel(n_jobs=-1) as parallel:
         gradients = tape.gradient(loss, [params])
         optimizer.apply_gradients(zip(gradients, [params]))
 
-plt.figure()
-plt.plot(losses)
-plt.xlabel('Epochs')
-plt.ylabel('Loss')
-plt.savefig('results/' + name + '/loss')
-
 mapper = ParallelMapperComplex(colors=np.hstack([f.numpy(), vertices, Xpca, Xtsne, Xumap]), filters=f.numpy(), resolutions=resolutions, gains=gains, clustering=kmeans)
 mapper.fit(vertices)
-nt = mapper.get_pyvis()
-nt.show("results/" + name + "/mapper_final.html")
 
 G, Af, Ad, Ap, At, Au = mapper.get_networkx(dimension=3)
 Cmapperf = scs.dijkstra(Af.todense(), directed=False)
@@ -236,63 +233,60 @@ for k in G.nodes():
     for idx_pt in mapper.node_info[k]["indices"]:
         T[idx_pt, k] = 1
 
-cost_pca, cost_tsne, cost_umap = 0., 0., 0. 
-cost_mapperbf, cost_mapperf = 0., 0.
-cost_mapperbd, cost_mapperd = 0., 0.
-cost_mapperbp, cost_mapperp = 0., 0.
-cost_mapperbt, cost_mappert = 0., 0.
-cost_mapperbu, cost_mapperu = 0., 0.
+matrices = [Cmapperbf, Cmapperbd, Cmapperbp, Cmapperbt, Cmapperbu, Cmapperf, Cmapperd, Cmapperp, Cmappert, Cmapperu]
+
+costs_baseline = [0., 0., 0.]
+costs = [0. for _ in range(len(matrices))]
 
 for i in range(0,C1.shape[0],100):
-#    print(str(i) + '/' + str(len(C1)))
     for j in range(0,C1.shape[1],100):
-#        print(str(j) + '/' + str(len(C1)))
-        Cmapperbf_cost  = np.where(np.isinf(Cmapperbf), C1[i,j]*np.ones(Cmapperbf.shape), Cmapperbf)
-        Cmapperbd_cost  = np.where(np.isinf(Cmapperbd), C1[i,j]*np.ones(Cmapperbd.shape), Cmapperbd)
-        Cmapperbp_cost  = np.where(np.isinf(Cmapperbp), C1[i,j]*np.ones(Cmapperbp.shape), Cmapperbp)
-        Cmapperbt_cost  = np.where(np.isinf(Cmapperbt), C1[i,j]*np.ones(Cmapperbt.shape), Cmapperbt)
-        Cmapperbu_cost  = np.where(np.isinf(Cmapperbu), C1[i,j]*np.ones(Cmapperbu.shape), Cmapperbu)
+        costs_baseline[0] = max(costs_baseline[0], np.abs(Cpca[i,j]  - C1[i,j]))
+        costs_baseline[1] = max(costs_baseline[1], np.abs(Ctsne[i,j] - C1[i,j]))
+        costs_baseline[2] = max(costs_baseline[2], np.abs(Cumap[i,j] - C1[i,j]))    
+        for idx_m, matrix in enumerate(matrices):
+            matrix_cost = np.where(np.isinf(matrix), C1[i,j]*np.ones(matrix.shape), matrix)
+            if idx_m <= 4:
+                costs[idx_m] = max(costs[idx_m], np.multiply( (Tbase[i:i+1,:].T).dot(Tbase[j:j+1,:]), np.abs(matrix_cost - C1[i,j]) ).max())
+            else:
+                costs[idx_m] = max(costs[idx_m], np.multiply( (T[i:i+1,:].T).dot(T[j:j+1,:]), np.abs(matrix_cost - C1[i,j]) ).max())
 
-        Cmapperf_cost   = np.where(np.isinf(Cmapperf),  C1[i,j]*np.ones(Cmapperf.shape),  Cmapperf)
-        Cmapperd_cost   = np.where(np.isinf(Cmapperd),  C1[i,j]*np.ones(Cmapperd.shape),  Cmapperd)
-        Cmapperp_cost   = np.where(np.isinf(Cmapperp),  C1[i,j]*np.ones(Cmapperp.shape),  Cmapperp)
-        Cmappert_cost   = np.where(np.isinf(Cmappert),  C1[i,j]*np.ones(Cmappert.shape),  Cmappert)
-        Cmapperu_cost   = np.where(np.isinf(Cmapperu),  C1[i,j]*np.ones(Cmapperu.shape),  Cmapperu)
+print(costs[0], costs[5])
+print(costs[1], costs[6])
+print(costs_baseline[0], costs[2], costs[7])
+print(costs_baseline[1], costs[3], costs[8])
+print(costs_baseline[2], costs[4], costs[9])
 
-        cost_pca        = max(cost_pca,        np.abs(Cpca[i,j]  - C1[i,j]))
-        cost_tsne       = max(cost_tsne,       np.abs(Ctsne[i,j] - C1[i,j]))
-        cost_umap       = max(cost_umap,       np.abs(Cumap[i,j] - C1[i,j]))
+scores_baseline = [0., 0., 0.]
+scores = [0. for _ in range(len(matrices))]
+n_clusters = len(np.unique(label_points))
 
-        cost_mapperbf   = max(cost_mapperbf,   np.multiply( (Tbase[i:i+1,:].T).dot(Tbase[j:j+1,:]), np.abs(Cmapperbf_cost - C1[i,j]) ).max())
-        cost_mapperbd   = max(cost_mapperbd,   np.multiply( (Tbase[i:i+1,:].T).dot(Tbase[j:j+1,:]), np.abs(Cmapperbd_cost - C1[i,j]) ).max())
-        cost_mapperbp   = max(cost_mapperbp,   np.multiply( (Tbase[i:i+1,:].T).dot(Tbase[j:j+1,:]), np.abs(Cmapperbp_cost - C1[i,j]) ).max())
-        cost_mapperbt   = max(cost_mapperbt,   np.multiply( (Tbase[i:i+1,:].T).dot(Tbase[j:j+1,:]), np.abs(Cmapperbt_cost - C1[i,j]) ).max())
-        cost_mapperbu   = max(cost_mapperbu,   np.multiply( (Tbase[i:i+1,:].T).dot(Tbase[j:j+1,:]), np.abs(Cmapperbu_cost - C1[i,j]) ).max())
+clustering_baseline = AgglomerativeClustering(n_clusters=n_clusters, linkage='single')
 
-        cost_mapperf   = max(cost_mapperf,   np.multiply( (T[i:i+1,:].T).dot(T[j:j+1,:]), np.abs(Cmapperf_cost - C1[i,j]) ).max())
-        cost_mapperd   = max(cost_mapperd,   np.multiply( (T[i:i+1,:].T).dot(T[j:j+1,:]), np.abs(Cmapperd_cost - C1[i,j]) ).max())
-        cost_mapperp   = max(cost_mapperp,   np.multiply( (T[i:i+1,:].T).dot(T[j:j+1,:]), np.abs(Cmapperp_cost - C1[i,j]) ).max())
-        cost_mappert   = max(cost_mappert,   np.multiply( (T[i:i+1,:].T).dot(T[j:j+1,:]), np.abs(Cmappert_cost - C1[i,j]) ).max())
-        cost_mapperu   = max(cost_mapperu,   np.multiply( (T[i:i+1,:].T).dot(T[j:j+1,:]), np.abs(Cmapperu_cost - C1[i,j]) ).max())
+for idx_b, reduced_data in enumerate([Xpca, Xtsne, Xumap]):
+    clustering_baseline.fit(reduced_data)
+    scores_baseline[idx_b] = adjusted_rand_score(label_points, clustering_baseline.labels_)
 
-print(cost_mapperbf, cost_mapperf)
-print(cost_mapperbd, cost_mapperd)
-print(cost_pca,  cost_mapperbp, cost_mapperp)
-print(cost_tsne, cost_mapperbt, cost_mappert)
-print(cost_umap, cost_mapperbu, cost_mapperu)
+clustering_mapper = AgglomerativeClustering(n_clusters=n_clusters, metric='precomputed', linkage='single')
 
-plt.figure()
-plt.hist(scheme.ravel())
-plt.savefig('results/' + name + '/hist')
+clus_labels = np.ones([len(vertices)])
+for idx_m, matrix in enumerate(matrices):
+    clustering_mapper.fit(matrix)
+    if idx_m <= 4:
+        for idx_pt in range(len(vertices)):
+            clus_labels[idx_pt] = clustering_mapper.labels_[np.argwhere(Tbase[idx_pt])[0]]
+    else:
+        for idx_pt in range(len(vertices)):
+            clus_labels[idx_pt] = clustering_mapper.labels_[np.argwhere(T[idx_pt])[0]]
+    scores[idx_m] = adjusted_rand_score(label_points, clus_labels)
 
-plt.figure()
-order = np.argsort(fn.numpy(), axis=0)
-plt.plot(fn.numpy()[order.ravel()], scheme[0,3,:][order], c='b');
-plt.plot(fn.numpy()[order.ravel()], scheme[0,4,:][order], c='r');
-plt.savefig('results/' + name + '/scheme')
+print(scores[0], scores[5])
+print(scores[1], scores[6])
+print(scores_baseline[0], scores[2], scores[7])
+print(scores_baseline[1], scores[3], scores[8])
+print(scores_baseline[2], scores[4], scores[9])
 
-corrf = tf.math.reduce_sum(params.numpy()[:,0:1]*np.array([[0],[0],[1]]))/tf.norm(params)
-print(corrf.numpy())
+corrf = (tf.math.reduce_sum(params.numpy()[:,0:1]*np.array([[0.],[0.],[1.]], dtype=np.float32))/tf.norm(params)).numpy()
+print(corrf)
 
 results = {
 'filter': params.numpy(),
@@ -302,21 +296,40 @@ results = {
 'pca': Xpca,
 'tsne': Xtsne,
 'umap': Xumap,
-'cost_pca': cost_pca,
-'cost_tsne': cost_tsne,
-'cost_umap': cost_umap,
-'cost_mapperbf': cost_mapperbf,
-'cost_mapperbd': cost_mapperbd,
-'cost_mapperbp': cost_mapperbp,
-'cost_mapperbt': cost_mapperbt,
-'cost_mapperbu': cost_mapperbu,
-'cost_mapperf': cost_mapperf,
-'cost_mapperd': cost_mapperd,
-'cost_mapperp': cost_mapperp,
-'cost_mappert': cost_mappert,
-'cost_mapperu': cost_mapperu,
-'corrf': corrf.numpy(),
+'costs_baselines': costs_baselines,
+'costs': costs,
+'scores_baselines': scores_baselines,
+'scores': scores,
+'corrf': corrf,
 }
 
 pck.dump(results, open('results/' + name + '/results.pkl', 'wb'))
+
+plt.figure()
+plt.plot(losses)
+plt.xlabel('Epochs')
+plt.ylabel('Loss')
+plt.savefig('results/' + name + '/losses')
+
+plt.figure()
+plt.boxplot(times)
+plt.savefig('results/' + name + '/times')
+
+plt.figure()
+plt.scatter(Xpca[:,0], Xpca[:,1], s=1)
+plt.savefig('results/' + name + '/pca')
+
+plt.figure()
+plt.scatter(Xtsne[:,0], Xtsne[:,1], s=1)
+plt.savefig('results/' + name + '/tsne')
+
+plt.figure()
+plt.scatter(Xumap[:,0], Xumap[:,1], s=1)
+plt.savefig('results/' + name + '/umap')
+
+nt = mapperbase.get_pyvis()
+nt.show("results/" + name + "/mapper_initial.html")
+
+nt = mapper.get_pyvis()
+nt.show("results/" + name + "/mapper_final.html")
 

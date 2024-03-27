@@ -270,13 +270,26 @@ clustering_mapper = AgglomerativeClustering(n_clusters=n_clusters, metric='preco
 
 clus_labels = np.ones([len(vertices)])
 for idx_m, matrix in enumerate(matrices):
-    clustering_mapper.fit(matrix)
+    good_idxs = np.argwhere(np.isinf(matrix).sum(axis=1) <= int(.8 * len(matrix))).ravel()
+    print(np.isinf(matrix).sum(axis=1))
+    matrix_clus = matrix[good_idxs,:][:,good_idxs]
+    clustering_mapper.fit(matrix_clus)
     if idx_m <= 4:
         for idx_pt in range(len(vertices)):
-            clus_labels[idx_pt] = clustering_mapper.labels_[np.argwhere(Tbase[idx_pt])[0]]
+            nodes = np.argwhere(Tbase[idx_pt])
+            inter, _, idxs2 = np.intersect1d(nodes, good_idxs, return_indices=True)
+            if len(inter) > 0:
+                clus_labels[idx_pt] = clustering_mapper.labels_[idxs2[0]]
+            else:
+                clus_labels[idx_pt] = clustering_mapper.labels_[0]
     else:
         for idx_pt in range(len(vertices)):
-            clus_labels[idx_pt] = clustering_mapper.labels_[np.argwhere(T[idx_pt])[0]]
+            nodes = np.argwhere(T[idx_pt])
+            inter, _, idxs2 = np.intersect1d(nodes, good_idxs, return_indices=True)
+            if len(inter) > 0:
+                clus_labels[idx_pt] = clustering_mapper.labels_[idxs2[0]]
+            else:
+                clus_labels[idx_pt] = clustering_mapper.labels_[0]
     scores[idx_m] = adjusted_rand_score(label_points, clus_labels)
 
 print(scores[0], scores[5])

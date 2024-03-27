@@ -64,7 +64,7 @@ params = {
 os.system('mkdir ' + 'results/' + name)
 pck.dump(params, open('results/' + name + '/params.pkl', 'wb'))
 
-score_fns = [adjusted_rand_score, adjusted_mutual_info_score]
+score_fns = [adjusted_rand_score, adjusted_mutual_info_score, completeness_score]
 
 files = []
 cells = []
@@ -206,7 +206,7 @@ for idx_b, reduced_data in enumerate([Xpca, Xtsne, Xumap]):
     clustering_baseline.fit(reduced_data)
     scores_baseline[idx_b] = [score_fn(timepoints, clustering_baseline.labels_) for score_fn in score_fns]
 
-clustering_mapper = AgglomerativeClustering(n_clusters=len(np.unique()), metric='precomputed', linkage='single')
+clustering_mapper = AgglomerativeClustering(n_clusters=len(np.unique(timepoints)), metric='precomputed', linkage='single')
 
 clus_labels = np.ones([len(vertices)])
 for idx_m, matrix in enumerate(matrices):

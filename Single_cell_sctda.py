@@ -208,7 +208,7 @@ for idx_b, reduced_data in enumerate([Xpca, Xtsne, Xumap]):
 
 clustering_mapper = AgglomerativeClustering(n_clusters=len(np.unique(timepoints)), metric='precomputed', linkage='single')
 
-clus_labels = np.ones([len(vertices)])
+clus_labels = np.ones([len(X)])
 for idx_m, matrix in enumerate(matrices):
     good_idxs = np.argwhere(np.isinf(matrix).sum(axis=1) <= int(.8 * len(matrix))).ravel()
     print(np.isinf(matrix).sum(axis=1))

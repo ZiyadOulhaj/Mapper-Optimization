@@ -204,7 +204,7 @@ clustering_baseline = AgglomerativeClustering(n_clusters=len(np.unique(timepoint
 
 for idx_b, reduced_data in enumerate([Xpca, Xtsne, Xumap]):
     clustering_baseline.fit(reduced_data)
-    scores_baseline[idx_b] = adjusted_rand_score(timepoints, clustering_baseline.labels_)
+    scores_baseline[idx_b] = [score_fn(timepoints, clustering_baseline.labels_) for score_fn in score_fns]
 
 clustering_mapper = AgglomerativeClustering(n_clusters=len(np.unique()), metric='precomputed', linkage='single')
 
@@ -230,7 +230,7 @@ for idx_m, matrix in enumerate(matrices):
                 clus_labels[idx_pt] = clustering_mapper.labels_[idxs2[0]]
             else:
                 clus_labels[idx_pt] = clustering_mapper.labels_[0]
-    scores[idx_m] = [score_fn(label_points, clus_labels) for score_fn in score_fns]
+    scores[idx_m] = [score_fn(timepoints, clus_labels) for score_fn in score_fns]
 
 corrfi,    corrf     = pearsonr(f_base,     timepoints), pearsonr(f_final,    timepoints)
 corrpca0,  corrpca1  = pearsonr(Xpca[:,0],  timepoints), pearsonr(Xpca[:,1],  timepoints)

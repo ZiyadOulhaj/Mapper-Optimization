@@ -260,7 +260,7 @@ clustering_baseline = AgglomerativeClustering(n_clusters=n_clusters, linkage='si
 
 for idx_b, reduced_data in enumerate([Xpca, Xtsne, Xumap]):
     clustering_baseline.fit(reduced_data)
-    scores_baseline[idx_b] = adjusted_rand_score(label_points, clustering_baseline.labels_)
+    scores_baseline[idx_b] = [score_fn(label_points, clustering_baseline.labels_) for score_fn in score_fns]
 
 clustering_mapper = AgglomerativeClustering(n_clusters=n_clusters, metric='precomputed', linkage='single')
 

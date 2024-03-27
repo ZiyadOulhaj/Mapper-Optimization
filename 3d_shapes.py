@@ -167,7 +167,7 @@ for k in Gbase.nodes():
         Tbase[idx_pt, k] = 1
 
 lr = tf.keras.optimizers.schedules.InverseTimeDecay(initial_learning_rate=initial_learning_rate, decay_steps=decay_steps, decay_rate=decay_rate)
-optimizer = tf.keras.optimizers.legacy.SGD(learning_rate=lr)
+optimizer = tf.keras.optimizers.SGD(learning_rate=lr)
 losses, times = [], []
 with Parallel(n_jobs=-1) as parallel:
 
@@ -296,9 +296,9 @@ results = {
 'pca': Xpca,
 'tsne': Xtsne,
 'umap': Xumap,
-'costs_baselines': costs_baselines,
+'costs_baseline': costs_baseline,
 'costs': costs,
-'scores_baselines': scores_baselines,
+'scores_baseline': scores_baseline,
 'scores': scores,
 'corrf': corrf,
 }

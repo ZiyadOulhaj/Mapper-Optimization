@@ -64,12 +64,9 @@ params = {
 os.system('mkdir ' + 'results/' + name)
 pck.dump(params, open('results/' + name + '/params.pkl', 'wb'))
 
-score_fns = [adjusted_rand_score, adjusted_mutual_info_score, completeness_score]
+score_fns = [adjusted_rand_score, adjusted_mutual_info_score, completeness_score, fowlkes_mallows_score]
 
-files = []
-cells = []
-libs = []
-days = []
+files, cells, libs, days = [], [], [], []
 with open(path + 'data.txt', 'r') as f:
     for line in f:
         sp = line[:-1].split('\t')

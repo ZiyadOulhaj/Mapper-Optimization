@@ -102,7 +102,7 @@ pck.dump(params, open('results/' + name + '/params.pkl', 'wb'))
 
 score_fns = [adjusted_rand_score, adjusted_mutual_info_score, completeness_score, fowlkes_mallows_score]
 
-np.random.seed(0)
+#np.random.seed(0)
 
 vertices, faces = off2numpy(path + shape)
 dimension = len(vertices)

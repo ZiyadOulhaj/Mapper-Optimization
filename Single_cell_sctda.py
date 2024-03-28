@@ -136,7 +136,7 @@ with Parallel(n_jobs=-1) as parallel:
         fn = (f - tf.math.reduce_min(f))/(tf.math.reduce_max(f) - tf.math.reduce_min(f))
         scheme = smooth_scheme(fn.numpy(), resolutions, gains, sigma)
         upscheme = np.repeat(scheme, K, axis=0)
-        assignments = bernoulli.rvs(upscheme, random_state=0)
+        assignments = bernoulli.rvs(upscheme) #, random_state=0)
         st, clusters = compute_mapper(X, ag, assignments, maximum=5)
         
         with tf.GradientTape() as tape:

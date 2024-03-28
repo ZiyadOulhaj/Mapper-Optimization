@@ -214,7 +214,7 @@ for idx_m, matrix in enumerate(matrices):
     if idx_m <= 4:
         good_vals = np.array([mapperbase.node_info[gn]['colors'][0] for gn in good_idxs])
         for idx_pt in range(len(X)):
-            nodes = np.argwhere(Tbase[idx_pt])
+            nodes = np.argwhere(Tbase[idx_pt]).ravel()
             inter, _, idxs2 = np.intersect1d(nodes, good_idxs, return_indices=True)
             if len(inter) > 0:
                 clus_labels[idx_pt] = clustering_mapper.labels_[idxs2[0]]
@@ -225,7 +225,7 @@ for idx_m, matrix in enumerate(matrices):
     else:
         good_vals = np.array([mapper.node_info[gn]['colors'][0] for gn in good_idxs])
         for idx_pt in range(len(X)):
-            nodes = np.argwhere(T[idx_pt])
+            nodes = np.argwhere(T[idx_pt]).ravel()
             inter, _, idxs2 = np.intersect1d(nodes, good_idxs, return_indices=True)
             if len(inter) > 0:
                 clus_labels[idx_pt] = clustering_mapper.labels_[idxs2[0]]

@@ -207,26 +207,32 @@ clustering_mapper = AgglomerativeClustering(n_clusters=len(np.unique(timepoints)
 
 clus_labels = np.ones([len(X)])
 for idx_m, matrix in enumerate(matrices):
-    good_idxs = np.argwhere(np.isinf(matrix).sum(axis=1) <= int(.8 * len(matrix))).ravel()
+    good_idxs = np.argwhere(np.isinf(matrix).sum(axis=1) <= int(.4 * len(matrix))).ravel()
     print(np.isinf(matrix).sum(axis=1))
     matrix_clus = matrix[good_idxs,:][:,good_idxs]
     clustering_mapper.fit(matrix_clus)
     if idx_m <= 4:
+        good_vals = np.array([mapperbase.node_info[gn]['colors'][0] for gn in good_idxs])
         for idx_pt in range(len(X)):
             nodes = np.argwhere(Tbase[idx_pt])
             inter, _, idxs2 = np.intersect1d(nodes, good_idxs, return_indices=True)
             if len(inter) > 0:
                 clus_labels[idx_pt] = clustering_mapper.labels_[idxs2[0]]
             else:
-                clus_labels[idx_pt] = clustering_mapper.labels_[0]
+                val = mapperbase.node_info[nodes[0]]['colors'][0]
+                closest_node = np.argsort(np.abs(val-good_vals))[0]
+                clus_labels[idx_pt] = clustering_mapper.labels_[closest_node]
     else:
+        good_vals = np.array([mapper.node_info[gn]['colors'][0] for gn in good_idxs])
         for idx_pt in range(len(X)):
             nodes = np.argwhere(T[idx_pt])
             inter, _, idxs2 = np.intersect1d(nodes, good_idxs, return_indices=True)
             if len(inter) > 0:
                 clus_labels[idx_pt] = clustering_mapper.labels_[idxs2[0]]
             else:
-                clus_labels[idx_pt] = clustering_mapper.labels_[0]
+                val = mapper.node_info[nodes[0]]['colors'][0]
+                closest_node = np.argsort(np.abs(val-good_vals))[0]
+                clus_labels[idx_pt] = clustering_mapper.labels_[closest_node]
     scores[idx_m] = [score_fn(timepoints, clus_labels) for score_fn in score_fns]
 
 corrfi,    corrf     = pearsonr(f_base,     timepoints), pearsonr(f_final,    timepoints)
